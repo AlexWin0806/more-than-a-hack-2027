@@ -8,7 +8,8 @@ fall out of that, each of which the majority-vote baseline lacks:
 
   * possession persists through ball drop-outs and loose balls (no evidence = no change)
   * a change needs sustained control by the other side, not one touch or a deflection
-  * the change is placed where the new team's control starts, not after a confirmation delay
+  * the change is placed where the new team's control starts: not after a confirmation delay,
+    and not when the ball merely leaves the old team
 
 Dead ball is an input here (a boolean mask); each live stretch is decoded on its own, so whoever
 restarts is decided by what happens after the restart.
@@ -36,19 +37,24 @@ def evidence(ball, players, team, reach=REACH_M, scale=SCALE_M):
     return np.where(near, e, 0.0)
 
 
-def decode(e, cost=SWITCH_COST):
-    """Viterbi over {home, away} for one live stretch. Returns 0/1 per frame (0 = home)."""
+def decode(e, cost=SWITCH_COST, late=False):
+    """Viterbi over two states for one stretch. Returns 0/1 per frame (0 = the positive state).
+
+    Stretches of frames with no evidence leave the moment of a change undetermined: every
+    position in the gap scores the same. late=False puts the change at the start of such a gap,
+    late=True at its end. For possession the end is the right one -- a loose or unseen ball stays
+    with the last team until the other side controls it (CHALLENGE.md)."""
     n = len(e)
     if n == 0:
         return np.zeros(0, dtype=np.int8)
     back = np.zeros((n, 2), dtype=np.int8)
     sh, sa = e[0], -e[0]
     for t in range(1, n):
-        if sa - cost > sh:
+        if (sa - cost >= sh) if late else (sa - cost > sh):
             nh, back[t, 0] = sa - cost, 1
         else:
             nh = sh
-        if sh - cost > sa:
+        if (sh - cost >= sa) if late else (sh - cost > sa):
             na, back[t, 1] = sh - cost, 0
         else:
             na, back[t, 1] = sa, 1
@@ -70,7 +76,7 @@ def label(ball, players, team, dead, runs, reach=REACH_M, scale=SCALE_M, cost=SW
         live = ~dead[lo:hi]
         edges = np.diff(np.concatenate(([0], live.astype(np.int8), [0])))
         for a, b in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)):
-            k = decode(e[lo + a:lo + b], cost)
+            k = decode(e[lo + a:lo + b], cost, late=True)
             out[lo + a:lo + b] = np.where(k == 0, "H", "A")
     return out
 
